@@ -64,3 +64,44 @@ The current integration retains an internal Nix-specific specialist server
 while upstream preparation/edit translation is unfinished. Its command is
 internal to the package; editors launch kakehashi directly. Some edits
 crossing protected Nix interpolation syntax must be refused for safety.
+
+## Minimal consumer integration
+
+Add this input to the consumer flake:
+
+    nix-embedded = {
+      url = "github:joshan-kana/nix-embedded-tooling";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+With the consumer's own pkgs binding:
+
+    embedded = inputs.nix-embedded.lib.mkFor {
+      inherit pkgs;
+      enabledLanguages = [ "bash" "python" "json" ];
+    };
+
+Compose the returned attributes with the existing flake:
+
+    # devShell packages
+    packages = [ embedded.lspPackage embedded.package ];
+
+    # checks
+    embedded-lint = embedded.lintCheck { src = self; };
+    embedded-lsp = embedded.lspCheck;
+
+    # existing treefmt-nix settings.formatter
+    nix-embedded = embedded.formatter;
+    nixfmt-final = embedded.finalNixfmtFormatter;
+
+Keep nixfmt at priority 2; the embedded formatter uses priority 4, and the
+final nixfmt pass uses priority 5. The consumer keeps its existing checks,
+formatters, and project-specific Kakehashi configuration.
+
+Editors run kakehashi directly. Helix registers it as a language server for
+Nix; Neovim 0.11+ uses vim.lsp.config; VS Code can use a generic LSP extension.
+
+The registry can be extended with registryOverrides and grammarPackages.
+For example, a custom language using the Bash grammar can specify its own
+aliases, extension, formatter command, LSP command, grammar derivation, and
+runtime tools without changing this repository.
