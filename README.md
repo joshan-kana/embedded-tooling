@@ -33,6 +33,7 @@ The root kakehashi.toml of a consumer may hold repository-specific options.
 
 - enabledLanguages: subset of known languages (default all)
 - registryOverrides: replace or add language definitions
+- grammarPackages: override Tree-sitter grammar derivations by language
 - formatterPackages and lspPackages: package lists by language
 - extraFormatterInputs and extraLspInputs: extra dependencies
 
@@ -50,3 +51,16 @@ replace adapter internals when equivalent behaviour is proven.
 
 Run nix flake check --no-build, then build the platform-specific lint and
 lsp checks. Test a consuming flake separately.
+
+## Limits
+
+The CLI currently supports formatting the registry's command, Ruff, Prettier
+and clang-format kinds. CLI linting has native adapters for ShellCheck and
+Ruff; external linters can still run separately in the consumer's checks.
+Kakehashi provides the editor-facing language-server routing independently
+of these CLI lint adapters.
+
+The current integration retains an internal Nix-specific specialist server
+while upstream preparation/edit translation is unfinished. Its command is
+internal to the package; editors launch kakehashi directly. Some edits
+crossing protected Nix interpolation syntax must be refused for safety.

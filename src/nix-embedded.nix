@@ -4,6 +4,7 @@
   kakehashiPackage ? null,
   enabledLanguages ? null,
   registryOverrides ? { },
+  grammarPackages ? { },
   formatterPackages ? { },
   lspPackages ? { },
   extraFormatterInputs ? [ ],
@@ -13,10 +14,15 @@
 let
   defaults = builtins.fromJSON (builtins.readFile ./nix-embedded-languages.json);
   selected = if enabledLanguages == null then builtins.attrNames defaults else enabledLanguages;
-  languageRegistry = lib.filterAttrs (name: _: builtins.elem name selected) (defaults // registryOverrides);
+  languageRegistry = lib.filterAttrs (name: _: builtins.elem name selected) (
+    defaults // registryOverrides
+  );
   registryFile = pkgs.writeText "embedded-language-registry.json" (builtins.toJSON languageRegistry);
   defaultFormatterPackages = {
-    bash = [ pkgs.shfmt pkgs.shellcheck ];
+    bash = [
+      pkgs.shfmt
+      pkgs.shellcheck
+    ];
     python = [ pkgs.ruff ];
     lua = [ pkgs.stylua ];
     javascript = [ pkgs.prettier ];
@@ -39,9 +45,15 @@ let
   };
   defaultLspPackages = {
     bash = [ pkgs.bash-language-server ];
-    python = [ pkgs.basedpyright pkgs.ruff ];
+    python = [
+      pkgs.basedpyright
+      pkgs.ruff
+    ];
     lua = [ pkgs.lua-language-server ];
-    javascript = [ pkgs.typescript-language-server pkgs.vscode-langservers-extracted ];
+    javascript = [
+      pkgs.typescript-language-server
+      pkgs.vscode-langservers-extracted
+    ];
     typescript = [ pkgs.typescript-language-server ];
     json = [ pkgs.vscode-langservers-extracted ];
     jsonc = [ pkgs.vscode-langservers-extracted ];
@@ -58,12 +70,17 @@ let
     html = [ pkgs.vscode-langservers-extracted ];
     markdown = [ pkgs.marksman ];
   };
-  toolsFor = packages:
+  toolsFor =
+    packages:
     lib.concatLists (map (name: packages.${name} or [ ]) (builtins.attrNames languageRegistry));
-  formatterInputs = [ pkgs.ast-grep pkgs.coreutils pkgs.nix ] ++
-    toolsFor (defaultFormatterPackages // formatterPackages) ++ extraFormatterInputs;
-  lspInputs = formatterInputs ++
-    toolsFor (defaultLspPackages // lspPackages) ++ extraLspInputs;
+  formatterInputs = [
+    pkgs.ast-grep
+    pkgs.coreutils
+    pkgs.nix
+  ]
+  ++ toolsFor (defaultFormatterPackages // formatterPackages)
+  ++ extraFormatterInputs;
+  lspInputs = formatterInputs ++ toolsFor (defaultLspPackages // lspPackages) ++ extraLspInputs;
 
   package = pkgs.writeShellApplication {
     name = "nix-embedded";
@@ -75,8 +92,8 @@ let
       export NIX_EMBEDDED_LANGUAGE_REGISTRY=${registryFile}
       export NIX_EMBEDDED_AST_GREP=${pkgs.ast-grep}/bin/ast-grep
       export NIX_EMBEDDED_NIX_INSTANTIATE=${pkgs.nix}/bin/nix-instantiate
-      export NIX_EMBEDDED_RUFF=${pkgs.ruff}/bin/ruff
-      export NIX_EMBEDDED_SHELLCHECK=${pkgs.shellcheck}/bin/shellcheck
+
+
       exec ${pkgs.python3}/bin/python3 ${./nix-embedded.py} "$@"
     '';
     meta.description = "Format and lint languages embedded in annotated Nix strings";
@@ -109,8 +126,8 @@ let
         export NIX_EMBEDDED_AST_GREP=${pkgs.ast-grep}/bin/ast-grep
         export NIX_EMBEDDED_NIXFMT=${pkgs.nixfmt}/bin/nixfmt
         export NIX_EMBEDDED_NIX_INSTANTIATE=${pkgs.nix}/bin/nix-instantiate
-        export NIX_EMBEDDED_RUFF=${pkgs.ruff}/bin/ruff
-        export NIX_EMBEDDED_SHELLCHECK=${pkgs.shellcheck}/bin/shellcheck
+
+
         ${pkgs.python3}/bin/python3 "$source_dir/nix-embedded-lsp-entry.py" "$@"
       '';
       meta.description = "Nix-aware embedded-language specialist LSP";
@@ -134,7 +151,8 @@ let
   };
 
   registryGrammars = lib.mapAttrs (
-    _language: spec: pkgs.tree-sitter-grammars.${"tree-sitter-${spec.grammar}"}
+    language: spec:
+    grammarPackages.${language} or pkgs.tree-sitter-grammars.${"tree-sitter-${spec.grammar}"}
   ) languageRegistry;
   grammars = registryGrammars // {
     nix = pkgs.tree-sitter-grammars.tree-sitter-nix;
