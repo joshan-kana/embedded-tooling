@@ -425,6 +425,43 @@ def lint_code(language: str, prepared: Prepared, path: Path, block: Block, data:
             diagnostics.append(f"{path}:{line}:{column}: {row.get('code') or 'Ruff'}: {row['message']}")
         return diagnostics
 
+    if isinstance(linter, dict) and linter.get("kind") == "json":
+        command = linter.get("command")
+        ok_codes = linter.get("okCodes", [0, 1])
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(arg, str) for arg in command)
+            or not isinstance(ok_codes, list)
+            or not all(isinstance(code, int) for code in ok_codes)
+        ):
+            raise ToolError(f"invalid JSON linter configuration for {language}")
+        output = run(command, stdin=prepared.code, cwd=path.parent, ok=tuple(ok_codes)).stdout
+        rows = json.loads(output or "[]")
+        if not isinstance(rows, list):
+            raise ToolError(f"JSON linter for {language} must return a diagnostics array")
+        diagnostics = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("message"), str):
+                raise ToolError(f"invalid JSON linter diagnostic for {language}")
+            try:
+                native_line = int(row["line"])
+                native_column = int(row["column"])
+                end_line = int(row.get("endLine", native_line))
+                end_column = int(row.get("endColumn", native_column + 1))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ToolError(f"invalid JSON linter location for {language}") from exc
+            if min(native_line, native_column, end_line, end_column) < 1:
+                raise ToolError(f"invalid JSON linter location for {language}")
+            if diagnostic_hits_placeholder(prepared, native_line, native_column, end_line, end_column):
+                continue
+            line, column = source_position(block, prepared, data, native_line, native_column)
+            severity = row.get("severity", "warning")
+            code = str(row.get("code", "")).strip()
+            prefix = f"{severity} {code}: " if code else f"{severity}: "
+            diagnostics.append(f"{path}:{line}:{column}: {prefix}{row['message']}")
+        return diagnostics
+
     raise ToolError(f"unsupported linter {linter!r} for {language}")
 
 
@@ -538,6 +575,24 @@ def self_test() -> None:
             raise ToolError(f"self-test linter source mapping failed: {mapped!r}")
         if any("B018" in item for item in lint_diagnostics):
             raise ToolError(f"self-test linter leaked an interpolation placeholder diagnostic: {lint_diagnostics!r}")
+
+        # Custom JSON linters get the same location mapping as built-in linters.
+        original_linter = LANGUAGES["bash"].get("linter")
+        LANGUAGES["bash"]["linter"] = {
+            "kind": "json",
+            "command": [
+                sys.executable,
+                "-c",
+                'import json,sys; print(json.dumps([{"line": 1, "column": 1, "code": "T001", '
+                '"message": "custom linter diagnostic"}])); sys.exit(1)',
+            ],
+        }
+        try:
+            custom = lint_files([path])
+            if not any("T001: custom linter diagnostic" in item for item in custom):
+                raise ToolError(f"self-test custom JSON linter failed: {custom!r}")
+        finally:
+            LANGUAGES["bash"]["linter"] = original_linter
 
 
 def main() -> int:

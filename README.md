@@ -105,3 +105,25 @@ The registry can be extended with registryOverrides and grammarPackages.
 For example, a custom language using the Bash grammar can specify its own
 aliases, extension, formatter command, LSP command, grammar derivation, and
 runtime tools without changing this repository.
+
+## Custom CLI linters
+
+Native command-line linting accepts either the built-in ShellCheck/Ruff
+adapters or a JSON-output command configured per language. A custom linter
+receives its prepared embedded source on standard input and returns a JSON
+array of diagnostics. Each item has one-based line and column coordinates,
+a message, and optional endLine, endColumn, severity, and code properties.
+The linter may exit with 0 or 1 by default; configure okCodes for other
+exit conventions. The embedded engine maps the locations back to the Nix
+source and suppresses diagnostics targeting protected interpolations.
+
+The registry entry takes this shape:
+
+    "linter": {
+      "kind": "json",
+      "command": ["my-linter-adapter", "--stdin"],
+      "okCodes": [0, 1]
+    }
+
+The adapter can normalize the output of any native tool without changing
+the embedded parser. It is not limited to the built-in languages.
