@@ -11,9 +11,10 @@ import os
 import sys
 import tempfile
 import urllib.parse
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any
 
 CORE_PATH = Path(__file__).with_name("nix-embedded.py")
 _spec = importlib.util.spec_from_file_location("nix_embedded_core", CORE_PATH)
@@ -103,7 +104,9 @@ def read_frame_sync(stream: Any) -> Json | None:
 
 
 def encode_frame(message: Mapping[str, Any]) -> bytes:
-    payload = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     return f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload
 
 
@@ -177,17 +180,29 @@ def language_backends(spec: Mapping[str, Any]) -> tuple[BackendSpec, ...]:
             raise RuntimeError("invalid embedded LSP backend entry")
         command = backend.get("command")
         name = backend.get("name")
-        if not isinstance(name, str) or not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+        if (
+            not isinstance(name, str)
+            or not isinstance(command, list)
+            or not all(isinstance(item, str) for item in command)
+        ):
             raise RuntimeError(f"invalid embedded LSP backend {backend!r}")
-        result.append(BackendSpec(name, tuple(command), backend_features(backend.get("features"))))
+        result.append(
+            BackendSpec(name, tuple(command), backend_features(backend.get("features")))
+        )
     return tuple(result)
 
 
 BACKEND_SPECS: dict[str, tuple[BackendSpec, ...]] = {
-    language: backends for language, spec in core.LANGUAGES.items() if (backends := language_backends(spec))
+    language: backends
+    for language, spec in core.LANGUAGES.items()
+    if (backends := language_backends(spec))
 }
-LANGUAGE_IDS = {language: str(core.LANGUAGES[language]["languageId"]) for language in BACKEND_SPECS}
-EXTENSIONS = {language: str(core.LANGUAGES[language]["extension"]) for language in BACKEND_SPECS}
+LANGUAGE_IDS = {
+    language: str(core.LANGUAGES[language]["languageId"]) for language in BACKEND_SPECS
+}
+EXTENSIONS = {
+    language: str(core.LANGUAGES[language]["extension"]) for language in BACKEND_SPECS
+}
 
 
 def ast_nodes_text(text: str) -> list[Any]:
@@ -288,7 +303,9 @@ def virtual_uri(host_uri: str, language: str, index: int) -> str:
     path = uri_path(host_uri)
     extension = EXTENSIONS[language]
     if path is not None:
-        return file_uri(path.with_name(f".{path.name}.nix-embedded-{index}.{extension}"))
+        return file_uri(
+            path.with_name(f".{path.name}.nix-embedded-{index}.{extension}")
+        )
     escaped = urllib.parse.quote(host_uri, safe="")
     return f"file:///tmp/nix-embedded/{escaped}-{index}.{extension}"
 
@@ -421,14 +438,18 @@ class Backend:
                     future = self.pending.pop(int(message["id"]), None)
                     if future is not None and not future.done():
                         if "error" in message:
-                            future.set_exception(core.ToolError(f"{self.spec.name}: {message['error']}"))
+                            future.set_exception(
+                                core.ToolError(f"{self.spec.name}: {message['error']}")
+                            )
                         else:
                             future.set_result(message.get("result"))
                     continue
                 method = message.get("method")
                 if method == "textDocument/publishDiagnostics":
                     params = message.get("params") or {}
-                    await self.diagnostics(self.spec.name, params.get("uri", ""), params)
+                    await self.diagnostics(
+                        self.spec.name, params.get("uri", ""), params
+                    )
                     continue
                 if "id" in message and method:
                     await self._answer_server_request(message)
@@ -462,7 +483,9 @@ class Backend:
             self.process.stdin.write(encode_frame(message))
             await self.process.stdin.drain()
 
-    async def request(self, method: str, params: Json | None = None, timeout: float = 15.0) -> Any:
+    async def request(
+        self, method: str, params: Json | None = None, timeout: float = 15.0
+    ) -> Any:
         if self.process is None and method != "initialize":
             await self.start()
         request_id = self.next_id
@@ -498,7 +521,7 @@ class Backend:
             self.process.terminate()
             try:
                 await asyncio.wait_for(self.process.wait(), 2)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.process.kill()
         self.process = None
 
@@ -521,11 +544,15 @@ class HostDocument:
         return next((item for item in self.virtuals if item.uri == uri), None)
 
 
-def map_range_to_host(virtual: VirtualDocument, range_: Mapping[str, Any]) -> Json | None:
+def map_range_to_host(
+    virtual: VirtualDocument, range_: Mapping[str, Any]
+) -> Json | None:
     return virtual.virtual_range_to_host(range_)
 
 
-def map_diagnostic_to_host(virtual: VirtualDocument, diagnostic: Mapping[str, Any], backend: str) -> Json | None:
+def map_diagnostic_to_host(
+    virtual: VirtualDocument, diagnostic: Mapping[str, Any], backend: str
+) -> Json | None:
     range_ = map_range_to_host(virtual, diagnostic["range"])
     if range_ is None:
         return None
@@ -536,7 +563,9 @@ def map_diagnostic_to_host(virtual: VirtualDocument, diagnostic: Mapping[str, An
     return result
 
 
-def map_location_to_host(virtual: VirtualDocument, value: Mapping[str, Any]) -> Json | None:
+def map_location_to_host(
+    virtual: VirtualDocument, value: Mapping[str, Any]
+) -> Json | None:
     uri = value.get("uri")
     if uri != virtual.uri:
         return dict(value)
@@ -549,7 +578,9 @@ def map_location_to_host(virtual: VirtualDocument, value: Mapping[str, Any]) -> 
     return result
 
 
-def map_location_link_to_host(virtual: VirtualDocument, value: Mapping[str, Any]) -> Json | None:
+def map_location_link_to_host(
+    virtual: VirtualDocument, value: Mapping[str, Any]
+) -> Json | None:
     result = dict(value)
     if "originSelectionRange" in result:
         mapped = map_range_to_host(virtual, result["originSelectionRange"])
@@ -566,7 +597,9 @@ def map_location_link_to_host(virtual: VirtualDocument, value: Mapping[str, Any]
     return result
 
 
-def map_text_edit_to_host(virtual: VirtualDocument, edit: Mapping[str, Any]) -> Json | None:
+def map_text_edit_to_host(
+    virtual: VirtualDocument, edit: Mapping[str, Any]
+) -> Json | None:
     result = dict(edit)
     if "range" in result:
         mapped = map_range_to_host(virtual, result["range"])
@@ -583,13 +616,19 @@ def map_text_edit_to_host(virtual: VirtualDocument, edit: Mapping[str, Any]) -> 
     return result
 
 
-def map_workspace_edit_to_host(virtual: VirtualDocument, edit: Mapping[str, Any]) -> Json:
+def map_workspace_edit_to_host(
+    virtual: VirtualDocument, edit: Mapping[str, Any]
+) -> Json:
     result = dict(edit)
     if "changes" in result:
         changes: dict[str, list[Json]] = {}
         for uri, edits in (result.get("changes") or {}).items():
             if uri == virtual.uri:
-                mapped = [item for raw in edits if (item := map_text_edit_to_host(virtual, raw)) is not None]
+                mapped = [
+                    item
+                    for raw in edits
+                    if (item := map_text_edit_to_host(virtual, raw)) is not None
+                ]
                 changes.setdefault(virtual.host_uri, []).extend(mapped)
             else:
                 changes[uri] = list(edits)
@@ -608,14 +647,18 @@ def map_workspace_edit_to_host(virtual: VirtualDocument, edit: Mapping[str, Any]
                 document["uri"] = virtual.host_uri
                 item["textDocument"] = document
                 item["edits"] = [
-                    mapped for edit_ in item.get("edits") or [] if (mapped := map_text_edit_to_host(virtual, edit_)) is not None
+                    mapped
+                    for edit_ in item.get("edits") or []
+                    if (mapped := map_text_edit_to_host(virtual, edit_)) is not None
                 ]
             changes.append(item)
         result["documentChanges"] = changes
     return result
 
 
-def map_result_to_host(method: str, virtual: VirtualDocument, result: Any, backend: str) -> Any:
+def map_result_to_host(
+    method: str, virtual: VirtualDocument, result: Any, backend: str
+) -> Any:
     if result is None:
         return None
     if method in {
@@ -664,14 +707,18 @@ def map_result_to_host(method: str, virtual: VirtualDocument, result: Any, backe
 
     if method == "textDocument/completion":
         container = dict(result) if isinstance(result, dict) else None
-        items = container.get("items", []) if container is not None else list(result or [])
+        items = (
+            container.get("items", []) if container is not None else list(result or [])
+        )
         mapped_items: list[Json] = []
         for raw in items:
             item = dict(raw)
             if item.get("textEdit") is not None:
                 item["textEdit"] = map_text_edit_to_host(virtual, item["textEdit"])
             item["additionalTextEdits"] = [
-                edit_ for value in item.get("additionalTextEdits") or [] if (edit_ := map_text_edit_to_host(virtual, value)) is not None
+                edit_
+                for value in item.get("additionalTextEdits") or []
+                if (edit_ := map_text_edit_to_host(virtual, value)) is not None
             ]
             item["data"] = {
                 "__nixEmbedded": {
@@ -693,7 +740,9 @@ def map_result_to_host(method: str, virtual: VirtualDocument, result: Any, backe
             if item.get("edit") is not None:
                 item["edit"] = map_workspace_edit_to_host(virtual, item["edit"])
             item["diagnostics"] = [
-                diag for value in item.get("diagnostics") or [] if (diag := map_diagnostic_to_host(virtual, value, backend)) is not None
+                diag
+                for value in item.get("diagnostics") or []
+                if (diag := map_diagnostic_to_host(virtual, value, backend)) is not None
             ]
             item["data"] = {
                 "__nixEmbedded": {
@@ -714,7 +763,11 @@ def map_result_to_host(method: str, virtual: VirtualDocument, result: Any, backe
                 continue
             item["position"] = position
             if item.get("textEdits"):
-                item["textEdits"] = [edit_ for value in item["textEdits"] if (edit_ := map_text_edit_to_host(virtual, value)) is not None]
+                item["textEdits"] = [
+                    edit_
+                    for value in item["textEdits"]
+                    if (edit_ := map_text_edit_to_host(virtual, value)) is not None
+                ]
             mapped.append(item)
         return mapped
 
@@ -734,7 +787,11 @@ def map_result_to_host(method: str, virtual: VirtualDocument, result: Any, backe
                     return None
                 item["location"] = location
             if item.get("children"):
-                item["children"] = [child for value in item["children"] if (child := convert(value)) is not None]
+                item["children"] = [
+                    child
+                    for value in item["children"]
+                    if (child := convert(value)) is not None
+                ]
             return item
 
         return [item for value in result or [] if (item := convert(value)) is not None]
@@ -742,7 +799,9 @@ def map_result_to_host(method: str, virtual: VirtualDocument, result: Any, backe
     return result
 
 
-def request_params_for_virtual(method: str, virtual: VirtualDocument, params: Mapping[str, Any]) -> Json | None:
+def request_params_for_virtual(
+    method: str, virtual: VirtualDocument, params: Mapping[str, Any]
+) -> Json | None:
     result = dict(params)
     result["textDocument"] = {"uri": virtual.uri}
     if "position" in result:
@@ -784,7 +843,9 @@ class Bridge:
             await asyncio.to_thread(sys.stdout.buffer.write, payload)
             await asyncio.to_thread(sys.stdout.buffer.flush)
 
-    async def respond(self, request_id: Any, result: Any = None, error: Json | None = None) -> None:
+    async def respond(
+        self, request_id: Any, result: Any = None, error: Json | None = None
+    ) -> None:
         message: Json = {"jsonrpc": "2.0", "id": request_id}
         if error is not None:
             message["error"] = error
@@ -839,13 +900,17 @@ class Bridge:
             backend.documents[virtual.uri] = virtual.version
         return backend
 
-    async def on_backend_diagnostics(self, backend: str, virtual_uri_: str, params: Json) -> None:
+    async def on_backend_diagnostics(
+        self, backend: str, virtual_uri_: str, params: Json
+    ) -> None:
         for document in self.documents.values():
             virtual = document.by_uri(virtual_uri_)
             if virtual is None:
                 continue
             mapped = [
-                diag for value in params.get("diagnostics") or [] if (diag := map_diagnostic_to_host(virtual, value, backend)) is not None
+                diag
+                for value in params.get("diagnostics") or []
+                if (diag := map_diagnostic_to_host(virtual, value, backend)) is not None
             ]
             document.diagnostics[(backend, virtual_uri_)] = mapped
             await self.notify(
@@ -853,12 +918,18 @@ class Bridge:
                 {
                     "uri": document.uri,
                     "version": document.version,
-                    "diagnostics": [value for values in document.diagnostics.values() for value in values],
+                    "diagnostics": [
+                        value
+                        for values in document.diagnostics.values()
+                        for value in values
+                    ],
                 },
             )
             return
 
-    async def sync_document(self, document: HostDocument, old: list[VirtualDocument]) -> None:
+    async def sync_document(
+        self, document: HostDocument, old: list[VirtualDocument]
+    ) -> None:
         old_by_uri = {item.uri: item for item in old}
         new_by_uri = {item.uri: item for item in document.virtuals}
 
@@ -871,7 +942,9 @@ class Bridge:
             for spec in BACKEND_SPECS[virtual.language]:
                 backend = self.backends.get(spec.name)
                 if backend is not None and uri in backend.documents:
-                    await backend.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+                    await backend.notify(
+                        "textDocument/didClose", {"textDocument": {"uri": uri}}
+                    )
                     backend.documents.pop(uri, None)
             for key in list(document.diagnostics):
                 if key[1] == uri:
@@ -893,7 +966,9 @@ class Bridge:
                     )
                     backend.documents[uri] = virtual.version
                 else:
-                    await backend.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+                    await backend.notify(
+                        "textDocument/didClose", {"textDocument": {"uri": uri}}
+                    )
                     backend.documents.pop(uri, None)
                     await self.ensure_backend_document(spec, virtual)
 
@@ -902,7 +977,11 @@ class Bridge:
             {
                 "uri": document.uri,
                 "version": document.version,
-                "diagnostics": [value for values in document.diagnostics.values() for value in values],
+                "diagnostics": [
+                    value
+                    for values in document.diagnostics.values()
+                    for value in values
+                ],
             },
         )
 
@@ -910,7 +989,9 @@ class Bridge:
         item = params["textDocument"]
         document = HostDocument(item["uri"], item["text"], int(item.get("version", 0)))
         try:
-            document.virtuals = build_virtuals(document.uri, document.text, document.version)
+            document.virtuals = build_virtuals(
+                document.uri, document.text, document.version
+            )
         except Exception as exc:
             log(f"parse failed for {document.uri}: {exc}")
             document.virtuals = []
@@ -930,7 +1011,9 @@ class Bridge:
             return
         old = document.virtuals
         document.text = text
-        document.version = int(params["textDocument"].get("version", document.version + 1))
+        document.version = int(
+            params["textDocument"].get("version", document.version + 1)
+        )
         try:
             document.virtuals = build_virtuals(uri, text, document.version)
         except Exception as exc:
@@ -947,9 +1030,13 @@ class Bridge:
             for spec in BACKEND_SPECS[virtual.language]:
                 backend = self.backends.get(spec.name)
                 if backend is not None and virtual.uri in backend.documents:
-                    await backend.notify("textDocument/didClose", {"textDocument": {"uri": virtual.uri}})
+                    await backend.notify(
+                        "textDocument/didClose", {"textDocument": {"uri": virtual.uri}}
+                    )
                     backend.documents.pop(virtual.uri, None)
-        await self.notify("textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []})
+        await self.notify(
+            "textDocument/publishDiagnostics", {"uri": uri, "diagnostics": []}
+        )
 
     async def request_feature(self, method: str, params: Json) -> Any:
         uri = params.get("textDocument", {}).get("uri")
@@ -1008,8 +1095,13 @@ class Bridge:
                 if "textDocument/documentSymbol" not in spec.features:
                     continue
                 backend = await self.ensure_backend_document(spec, virtual)
-                raw = await backend.request("textDocument/documentSymbol", {"textDocument": {"uri": virtual.uri}})
-                mapped = map_result_to_host("textDocument/documentSymbol", virtual, raw, spec.name)
+                raw = await backend.request(
+                    "textDocument/documentSymbol",
+                    {"textDocument": {"uri": virtual.uri}},
+                )
+                mapped = map_result_to_host(
+                    "textDocument/documentSymbol", virtual, raw, spec.name
+                )
                 if mapped:
                     result.extend(mapped)
                 break
@@ -1063,13 +1155,24 @@ class Bridge:
                 break
         if virtual is None:
             return item
-        document = next((doc for doc in self.documents.values() if doc.by_uri(virtual.uri) is virtual), None)
+        document = next(
+            (
+                doc
+                for doc in self.documents.values()
+                if doc.by_uri(virtual.uri) is virtual
+            ),
+            None,
+        )
         if document is not None:
             await self.ensure_backend_document(backend.spec, virtual)
         forwarded = dict(item)
         forwarded["data"] = marker.get("original")
         raw = await backend.request(method, forwarded)
-        parent_method = "textDocument/completion" if method == "completionItem/resolve" else "textDocument/codeAction"
+        parent_method = (
+            "textDocument/completion"
+            if method == "completionItem/resolve"
+            else "textDocument/codeAction"
+        )
         mapped = map_result_to_host(parent_method, virtual, [raw], backend.spec.name)
         return mapped[0] if mapped else item
 
@@ -1093,7 +1196,16 @@ class Bridge:
                         "textDocumentSync": 1,
                         "completionProvider": {
                             "resolveProvider": True,
-                            "triggerCharacters": [".", "/", "$", "{", "(", "[", '"', "'"],
+                            "triggerCharacters": [
+                                ".",
+                                "/",
+                                "$",
+                                "{",
+                                "(",
+                                "[",
+                                '"',
+                                "'",
+                            ],
                         },
                         "hoverProvider": True,
                         "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
@@ -1119,9 +1231,7 @@ class Bridge:
                 result = await self.formatting(params)
             elif method == "textDocument/documentSymbol":
                 result = await self.document_symbols(params)
-            elif method == "completionItem/resolve":
-                result = await self.resolve_item(method, params)
-            elif method == "codeAction/resolve":
+            elif method == "completionItem/resolve" or method == "codeAction/resolve":
                 result = await self.resolve_item(method, params)
             elif method == "workspace/executeCommand":
                 result = await self.execute_command(params)
@@ -1188,7 +1298,9 @@ async def self_test() -> None:
         host.write_text(fixture)
         virtuals = build_virtuals(file_uri(host), fixture, 1)
         if [item.language for item in virtuals] != ["python", "bash"]:
-            raise core.ToolError("LSP self-test did not discover Python and Bash blocks")
+            raise core.ToolError(
+                "LSP self-test did not discover Python and Bash blocks"
+            )
         if "lua" not in BACKEND_SPECS:
             raise core.ToolError("LSP self-test registry is missing Lua support")
 
@@ -1202,11 +1314,17 @@ async def self_test() -> None:
         diagnostics_seen = asyncio.Event()
 
         async def diagnostics(backend: str, uri: str, params: Json) -> None:
-            if backend == "ruff" and uri == python_virtual.uri and params.get("diagnostics"):
+            if (
+                backend == "ruff"
+                and uri == python_virtual.uri
+                and params.get("diagnostics")
+            ):
                 diagnostics_seen.set()
 
         folders = [{"uri": file_uri(root), "name": root.name}]
-        pyright = Backend(BACKEND_SPECS["python"][0], file_uri(root), folders, diagnostics)
+        pyright = Backend(
+            BACKEND_SPECS["python"][0], file_uri(root), folders, diagnostics
+        )
         ruff = Backend(BACKEND_SPECS["python"][1], file_uri(root), folders, diagnostics)
         bash = Backend(BACKEND_SPECS["bash"][0], file_uri(root), folders, diagnostics)
         try:
@@ -1246,13 +1364,21 @@ async def self_test() -> None:
                     "context": {"triggerKind": 1},
                 },
             )
-            items = completion.get("items", []) if isinstance(completion, dict) else completion or []
+            items = (
+                completion.get("items", [])
+                if isinstance(completion, dict)
+                else completion or []
+            )
             labels = {item.get("label") for item in items}
             if not ({"exists", "read_text", "write_text"} & labels):
-                raise core.ToolError(f"basedpyright completion smoke test failed; labels sample={list(labels)[:20]!r}")
+                raise core.ToolError(
+                    f"basedpyright completion smoke test failed; labels sample={list(labels)[:20]!r}"
+                )
             await asyncio.wait_for(diagnostics_seen.wait(), timeout=10)
         finally:
-            await asyncio.gather(pyright.stop(), ruff.stop(), bash.stop(), return_exceptions=True)
+            await asyncio.gather(
+                pyright.stop(), ruff.stop(), bash.stop(), return_exceptions=True
+            )
 
 
 def main() -> int:
@@ -1264,7 +1390,7 @@ def main() -> int:
             asyncio.run(self_test())
         else:
             asyncio.run(Bridge().run())
-    except (core.ToolError, OSError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, core.ToolError, OSError) as exc:
         log(str(exc))
         return 2
     return 0

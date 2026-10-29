@@ -1,129 +1,149 @@
 # Nix embedded-language tooling
 
-Reusable, editor-independent language tooling for explicitly annotated code
-inside Nix strings. Supports an open registry of languages and native tools.
+Embedded-language LSP, formatting and linting integration for annotated Nix
+strings, independent of the consuming editor and host configuration.
 
-## Flake input
+Kakehashi is the editor-facing LSP executable. A Nix-aware internal specialist
+prepares embedded source, protects Nix interpolations and maps safe edits and
+diagnostics back to Nix. Treefmt selects formatters and linters, using the
+consumer's existing Treefmt configuration for both ordinary language files
+and embedded source.
 
-Add an input named nix-embedded from github:joshan-kana/nix-embedded-tooling.
-Make its nixpkgs input follow the consumer repository's nixpkgs.
+## Add the flake input
 
-Build the integration with:
-
-    embedded = nix-embedded.lib.mkFor {
-      inherit pkgs;
-      enabledLanguages = [ "bash" "python" "json" "yaml" ];
-    };
-
-The returned attributes include:
-- lspPackage: Kakehashi-powered editor LSP command named kakehashi
-- package: embedded-language formatter and linter
-- formatter and finalNixfmtFormatter: treefmt formatter definitions
-- lintCheck { src = self; }: reproducible native lint check
-- lspCheck: LSP end-to-end protocol smoke test
-- hostLspPackage and languageRegistry
-
-Merge the formatter definitions with existing treefmt config; add the lint
-check to the consuming flake's checks and the LSP package to its development
-environment. Point each editor's LSP client at the provided kakehashi command.
-
-The root kakehashi.toml of a consumer may hold repository-specific options.
-
-## Language and tool configuration
-
-- enabledLanguages: subset of known languages (default all)
-- registryOverrides: replace or add language definitions
-- grammarPackages: override Tree-sitter grammar derivations by language
-- formatterPackages and lspPackages: package lists by language
-- extraFormatterInputs and extraLspInputs: extra dependencies
-
-Formatters and language servers are selected by the registry's executable
-commands; they are not editor-specific. The built-in CLI lint backends
-currently cover Bash (ShellCheck) and Python (Ruff). Other languages can use
-their configured LSP and native formatters without inventing a generic
-lint-equivalent where none exists.
-
-This is an extraction of a working Nix-string adapter. Kakehashi is the
-editor-facing bridge. Its pending virtual-document preparation support can
-replace adapter internals when equivalent behaviour is proven.
-
-## Development
-
-Run nix flake check --no-build, then build the platform-specific lint and
-lsp checks. Test a consuming flake separately.
-
-## Limits
-
-The CLI currently supports formatting the registry's command, Ruff, Prettier
-and clang-format kinds. CLI linting has native adapters for ShellCheck and
-Ruff; external linters can still run separately in the consumer's checks.
-Kakehashi provides the editor-facing language-server routing independently
-of these CLI lint adapters.
-
-The current integration retains an internal Nix-specific specialist server
-while upstream preparation/edit translation is unfinished. Its command is
-internal to the package; editors launch kakehashi directly. Some edits
-crossing protected Nix interpolation syntax must be refused for safety.
-
-## Minimal consumer integration
-
-Add this input to the consumer flake:
-
-    nix-embedded = {
-      url = "github:joshan-kana/nix-embedded-tooling";
+    embedded-tooling = {
+      url = "github:joshan-kana/embedded-tooling";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-With the consumer's own pkgs binding:
+The integration is a library function and does not require flake-parts:
 
-    embedded = inputs.nix-embedded.lib.mkFor {
+    embedded = inputs.embedded-tooling.lib.mkFor {
       inherit pkgs;
-      enabledLanguages = [ "bash" "python" "json" ];
+      languages = {
+        bash.enable = true;
+        python.enable = true;
+        rust.enable = false;
+      };
     };
 
-Compose the returned attributes with the existing flake:
+All built-in languages are enabled unless explicitly disabled.
+The language options are Nix module options. Invalid types fail evaluation.
+The public lib.languageOptionsModule can be imported into a larger Nix module
+to provide autocomplete, option introspection and merge semantics.
 
-    # devShell packages
-    packages = [ embedded.lspPackage embedded.package ];
+## Reuse the existing Treefmt configuration
 
-    # checks
-    embedded-lint = embedded.lintCheck { src = self; };
-    embedded-lsp = embedded.lspCheck;
+Treefmt should remain the only configuration for native formatter commands,
+linter commands, included files, priority and command-line options.
 
-    # existing treefmt-nix settings.formatter
-    nix-embedded = embedded.formatter;
-    nixfmt-final = embedded.finalNixfmtFormatter;
+For a consumer already using treefmt-nix, evaluate its normal module once
+without the embedded adapter and once with the adapter:
 
-Keep nixfmt at priority 2; the embedded formatter uses priority 4, and the
-final nixfmt pass uses priority 5. The consumer keeps its existing checks,
-formatters, and project-specific Kakehashi configuration.
+    baseModule = {
+      imports = [ inputs.embedded-tooling.lib.treefmtModule ];
+      projectRootFile = "flake.nix";
 
-Editors run kakehashi directly. Helix registers it as a language server for
-Nix; Neovim 0.11+ uses vim.lsp.config; VS Code can use a generic LSP extension.
+      programs.nixfmt.enable = true;
+      # Other formatter and linter options belong here.
+    };
 
-The registry can be extended with registryOverrides and grammarPackages.
-For example, a custom language using the Bash grammar can specify its own
-aliases, extension, formatter command, LSP command, grammar derivation, and
-runtime tools without changing this repository.
+    base = inputs.treefmt-nix.lib.evalModule pkgs baseModule;
 
-## Custom CLI linters
+    embedded = inputs.embedded-tooling.lib.mkFor {
+      inherit pkgs;
+      treefmtConfig = base.config.build.configFile;
+    };
 
-Native command-line linting accepts either the built-in ShellCheck/Ruff
-adapters or a JSON-output command configured per language. A custom linter
-receives its prepared embedded source on standard input and returns a JSON
-array of diagnostics. Each item has one-based line and column coordinates,
-a message, and optional endLine, endColumn, severity, and code properties.
-The linter may exit with 0 or 1 by default; configure okCodes for other
-exit conventions. The embedded engine maps the locations back to the Nix
-source and suppresses diagnostics targeting protected interpolations.
+    full = inputs.treefmt-nix.lib.evalModule pkgs {
+      imports = [ baseModule ];
+      settings.formatter = {
+        nix-embedded = embedded.formatter;
+        nixfmt-final = embedded.finalNixfmtFormatter;
+      };
+    };
 
-The registry entry takes this shape:
+Use full.config.build.wrapper for nix fmt and full.config.build.check self
+for the existing flake formatting check. The two evaluations use the same
+baseModule, not two separately maintained configurations. The first excludes
+the embedded adapter to avoid a circular derivation dependency.
 
-    "linter": {
-      "kind": "json",
-      "command": ["my-linter-adapter", "--stdin"],
-      "okCodes": [0, 1]
-    }
+When no treefmtConfig is passed, the package uses its shipped default
+treefmt-nix module, which provides native formatting and applicable checking
+tools for its built-in languages. The consumer can import
+lib.treefmtModule to adopt those defaults or override them through the
+usual treefmt-nix options.
 
-The adapter can normalize the output of any native tool without changing
-the embedded parser. It is not limited to the built-in languages.
+The embedded formatter supplies virtual filenames such as
+config.nix.embedded.py to Treefmt's --stdin mode, preserving the existing
+formatter configuration's path selection and native tool settings.
+Intervening Nix expressions remain protected and cannot be replaced by
+unsafe native tool edits.
+
+## Language options
+
+The typed lib.mkFor languages option is an attribute set:
+
+    languages.example = {
+      enable = true;
+      aliases = [ "example" ];
+      extension = "sh";
+      languageId = "shellscript";
+      grammar = "bash";
+      lsp = [
+        {
+          name = "bash-language-server";
+          command = [ "bash-language-server" "start" ];
+          features = [ "semantic" ];
+        }
+      ];
+    };
+
+Optional overrides include grammarPackages (Tree-sitter derivations),
+lspPackages (language-server derivations), extraLspInputs and
+kakehashiPackage. Tool selection and formatter/linter configuration belong
+in treefmt-nix, not the LSP registry.
+
+The existing annotations require no special editor plugin:
+
+    /* bash */ ''
+      echo "hello"
+    ''
+
+    /* python */ ''
+      print(${builtins.toString 42})
+    ''
+
+VS Code, Helix and Neovim all connect to the provided kakehashi command
+using their usual LSP configuration. Repository-specific nixd option
+expressions may live in a root kakehashi.toml.
+
+## Tests
+
+    nix flake check --all-systems --no-build
+    nix build .#checks.x86_64-linux.lint
+    nix build .#checks.x86_64-linux.language-matrix
+    nix build .#checks.x86_64-linux.lsp
+
+The language matrix invokes formatting twice for each built-in language,
+checks idempotence and Nix syntax, and checks protected interpolations.
+The LSP smoke test exercises the running Kakehashi bridge and native servers.
+
+## Limits
+
+Formatting uses the same Treefmt configuration as standalone files. A
+lint-only tool that rejects incomplete embedded source does not prevent
+other native formatters from operating; Treefmt's standalone check still
+reports that failure.
+
+ShellCheck and Ruff CLI diagnostics retain specialised source-coordinate
+mapping and reuse the configured Treefmt commands and options. For other
+native checkers the generic Treefmt CLI fallback currently reports the
+affected Nix block, which is less precise than language-server diagnostics.
+New checkers with different output formats may require additional position
+adapters before exact line mapping can be claimed.
+
+Not every backend can safely edit across protected Nix interpolations.
+The upstream Kakehashi virtual-document preparation series remains under
+review; this package retains its existing internal Nix specialist until
+upstream offers equivalent safe edit translation.

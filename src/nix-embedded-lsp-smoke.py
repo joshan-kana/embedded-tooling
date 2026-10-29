@@ -101,7 +101,9 @@ class LspClient:
             message["params"] = params
         self.send(message)
 
-    def request(self, method: str, params: dict[str, Any] | None = None, timeout: float = 30) -> Any:
+    def request(
+        self, method: str, params: dict[str, Any] | None = None, timeout: float = 30
+    ) -> Any:
         request_id = self.next_id
         self.next_id += 1
         message: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
@@ -115,7 +117,9 @@ class LspClient:
                 if remaining <= 0:
                     tail = "\n".join(self.stderr[-30:])
                     requests = ", ".join(self.server_requests[-20:])
-                    raise RuntimeError(f"timed out waiting for {method}; server requests=[{requests}]\n{tail}")
+                    raise RuntimeError(
+                        f"timed out waiting for {method}; server requests=[{requests}]\n{tail}"
+                    )
                 self.condition.wait(remaining)
             response = self.responses.pop(request_id)
         if "error" in response:
@@ -159,18 +163,26 @@ def position(
     raise RuntimeError(f"fixture is missing occurrence {occurrence} of {needle!r}")
 
 
-def decode_semantic_tokens(data: list[int], token_types: list[str]) -> list[tuple[int, int, int, str]]:
+def decode_semantic_tokens(
+    data: list[int], token_types: list[str]
+) -> list[tuple[int, int, int, str]]:
     decoded: list[tuple[int, int, int, str]] = []
     line = 0
     column = 0
     for offset in range(0, len(data), 5):
-        delta_line, delta_column, length, token_type, _modifiers = data[offset : offset + 5]
+        delta_line, delta_column, length, token_type, _modifiers = data[
+            offset : offset + 5
+        ]
         if delta_line:
             line += delta_line
             column = delta_column
         else:
             column += delta_column
-        name = token_types[token_type] if token_type < len(token_types) else str(token_type)
+        name = (
+            token_types[token_type]
+            if token_type < len(token_types)
+            else str(token_type)
+        )
         decoded.append((line, column, length, name))
     return decoded
 
@@ -194,7 +206,11 @@ def wait_for_completion(
     labels: set[str] = set()
     while time.monotonic() < deadline:
         labels = completion_labels(client.request("textDocument/completion", params))
-        if expected & labels or any(label.startswith(f"{candidate}(") for label in labels for candidate in expected):
+        if expected & labels or any(
+            label.startswith(f"{candidate}(")
+            for label in labels
+            for candidate in expected
+        ):
             return labels
         time.sleep(0.05)
     sample = sorted(labels)[:25]
@@ -245,7 +261,9 @@ def main() -> int:
                 {
                     "processId": os.getpid(),
                     "rootUri": root.resolve().as_uri(),
-                    "workspaceFolders": [{"uri": root.resolve().as_uri(), "name": root.name}],
+                    "workspaceFolders": [
+                        {"uri": root.resolve().as_uri(), "name": root.name}
+                    ],
                     "capabilities": {
                         "general": {"positionEncodings": ["utf-16"]},
                         "workspace": {"configuration": True, "workspaceFolders": True},
@@ -291,7 +309,9 @@ def main() -> int:
             semantic_provider = capabilities.get("semanticTokensProvider")
             if not isinstance(semantic_provider, dict):
                 raise RuntimeError("kakehashi did not advertise semantic tokens")
-            semantic_types = list((semantic_provider.get("legend") or {}).get("tokenTypes") or [])
+            semantic_types = list(
+                (semantic_provider.get("legend") or {}).get("tokenTypes") or []
+            )
             client.notify("initialized", {})
             client.notify(
                 "textDocument/didOpen",
@@ -324,7 +344,9 @@ def main() -> int:
                 client,
                 {
                     "textDocument": {"uri": uri},
-                    "position": position(lines, "nixdCompletionTar", after=True, occurrence=2),
+                    "position": position(
+                        lines, "nixdCompletionTar", after=True, occurrence=2
+                    ),
                     "context": {"triggerKind": 1},
                 },
                 {"nixdCompletionTarget"},
@@ -346,7 +368,9 @@ def main() -> int:
                 client,
                 {
                     "textDocument": {"uri": uri},
-                    "position": position(lines, "interpolationCompletionTar", after=True, occurrence=2),
+                    "position": position(
+                        lines, "interpolationCompletionTar", after=True, occurrence=2
+                    ),
                     "context": {"triggerKind": 1},
                 },
                 {"interpolationCompletionTarget"},
@@ -386,22 +410,34 @@ def main() -> int:
                 "embedded JavaScript completion did not reach typescript-language-server",
             )
 
-            tokens = client.request("textDocument/semanticTokens/full", {"textDocument": {"uri": uri}})
+            tokens = client.request(
+                "textDocument/semanticTokens/full", {"textDocument": {"uri": uri}}
+            )
             if not isinstance(tokens, dict) or not tokens.get("data"):
-                raise RuntimeError("Tree-sitter semantic-token smoke test returned no tokens")
+                raise RuntimeError(
+                    "Tree-sitter semantic-token smoke test returned no tokens"
+                )
             decoded = decode_semantic_tokens(tokens["data"], semantic_types)
             lua_line = position(lines, "string.")["line"]
             javascript_line = position(lines, "Math.")["line"]
             if not any(
-                line == lua_line and column >= 4 and kind in {"keyword", "variable", "function", "method"}
+                line == lua_line
+                and column >= 4
+                and kind in {"keyword", "variable", "function", "method"}
                 for line, column, _length, kind in decoded
             ):
-                raise RuntimeError("semantic-token smoke test did not highlight embedded Lua")
+                raise RuntimeError(
+                    "semantic-token smoke test did not highlight embedded Lua"
+                )
             if not any(
-                line == javascript_line and column >= 4 and kind in {"variable", "property", "function", "method"}
+                line == javascript_line
+                and column >= 4
+                and kind in {"variable", "property", "function", "method"}
                 for line, column, _length, kind in decoded
             ):
-                raise RuntimeError("semantic-token smoke test did not highlight embedded JavaScript")
+                raise RuntimeError(
+                    "semantic-token smoke test did not highlight embedded JavaScript"
+                )
         finally:
             client.close()
     return 0

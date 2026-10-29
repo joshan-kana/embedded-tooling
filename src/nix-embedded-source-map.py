@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 
 def char_to_position(lsp: Any, text: str, index: int) -> dict[str, int]:
@@ -14,7 +15,9 @@ def char_to_position(lsp: Any, text: str, index: int) -> dict[str, int]:
     return {"line": prefix.count("\n"), "character": lsp.utf16_len(line_text)}
 
 
-def evaluate_masked(lsp: Any, block: Any, data: bytes) -> tuple[str, str, tuple[str, ...], str]:
+def evaluate_masked(
+    lsp: Any, block: Any, data: bytes
+) -> tuple[str, str, tuple[str, ...], str]:
     expression = data[block.start : block.end]
     original = data[block.content_start : block.content_end].decode("utf-8")
     occupied = expression.decode("utf-8")
@@ -35,7 +38,9 @@ def evaluate_masked(lsp: Any, block: Any, data: bytes) -> tuple[str, str, tuple[
 
     masked_expression = expression
     for start, end, placeholder in sorted(replacements, reverse=True):
-        masked_expression = masked_expression[:start] + placeholder.encode() + masked_expression[end:]
+        masked_expression = (
+            masked_expression[:start] + placeholder.encode() + masked_expression[end:]
+        )
 
     masked = masked_expression[2:-2].decode("utf-8")
     evaluated = lsp.core.run(
@@ -51,7 +56,9 @@ def evaluate_masked(lsp: Any, block: Any, data: bytes) -> tuple[str, str, tuple[
     try:
         code = json.loads(evaluated)
     except json.JSONDecodeError as exc:
-        raise lsp.core.ToolError(f"nix-instantiate returned invalid JSON: {exc}") from exc
+        raise lsp.core.ToolError(
+            f"nix-instantiate returned invalid JSON: {exc}"
+        ) from exc
     if not isinstance(code, str):
         raise lsp.core.ToolError("Nix did not evaluate the embedded block to a string")
     return original, masked, tuple(placeholders), code
@@ -83,7 +90,10 @@ def install(lsp: Any) -> None:
             raw_index = host_index - self.source_map.content_start_char
             if raw_index < 0 or raw_index >= len(self.source_map.raw_to_evaluated):
                 return None
-            if any(start <= raw_index < end for start, end in self.source_map.raw_interpolation_ranges):
+            if any(
+                start <= raw_index < end
+                for start, end in self.source_map.raw_interpolation_ranges
+            ):
                 return None
             evaluated_index = self.source_map.raw_to_evaluated[raw_index]
             if self.in_placeholder(evaluated_index):
@@ -96,7 +106,9 @@ def install(lsp: Any) -> None:
             evaluated_index = lsp.position_to_char(self.text, position)
             if self.in_placeholder(evaluated_index):
                 return None
-            if evaluated_index < 0 or evaluated_index >= len(self.source_map.evaluated_to_raw):
+            if evaluated_index < 0 or evaluated_index >= len(
+                self.source_map.evaluated_to_raw
+            ):
                 return None
             raw_index = self.source_map.evaluated_to_raw[evaluated_index]
             return char_to_position(
@@ -108,7 +120,10 @@ def install(lsp: Any) -> None:
         def in_placeholder(self, index: int) -> bool:
             if self.source_map is None:
                 return False
-            return any(start <= index < end for start, end in self.source_map.placeholder_ranges)
+            return any(
+                start <= index < end
+                for start, end in self.source_map.placeholder_ranges
+            )
 
         def range_hits_placeholder(self, range_: Mapping[str, Any]) -> bool:
             if self.source_map is None:
@@ -116,8 +131,14 @@ def install(lsp: Any) -> None:
             start = lsp.position_to_char(self.text, range_["start"])
             end = lsp.position_to_char(self.text, range_["end"])
             if start == end:
-                return any(left <= start < right for left, right in self.source_map.placeholder_ranges)
-            return any(start < right and end > left for left, right in self.source_map.placeholder_ranges)
+                return any(
+                    left <= start < right
+                    for left, right in self.source_map.placeholder_ranges
+                )
+            return any(
+                start < right and end > left
+                for left, right in self.source_map.placeholder_ranges
+            )
 
     def build_virtuals(host_uri: str, text: str, version: int) -> list[Any]:
         data = text.encode("utf-8")
@@ -129,9 +150,13 @@ def install(lsp: Any) -> None:
             language = block.language
             if language not in lsp.BACKEND_SPECS:
                 continue
-            original, masked, placeholders, evaluated = evaluate_masked(lsp, block, data)
+            original, masked, placeholders, evaluated = evaluate_masked(
+                lsp, block, data
+            )
             raw_to_masked, masked_to_raw = lsp.core.boundary_maps(original, masked)
-            masked_to_evaluated, evaluated_to_masked = lsp.core.boundary_maps(masked, evaluated)
+            masked_to_evaluated, evaluated_to_masked = lsp.core.boundary_maps(
+                masked, evaluated
+            )
             raw_to_evaluated = [masked_to_evaluated[item] for item in raw_to_masked]
             evaluated_to_raw = [masked_to_raw[item] for item in evaluated_to_masked]
 
@@ -139,13 +164,17 @@ def install(lsp: Any) -> None:
             for placeholder in placeholders:
                 start = evaluated.find(placeholder)
                 if start < 0 or evaluated.find(placeholder, start + 1) >= 0:
-                    raise lsp.core.ToolError(f"embedded LSP lost or duplicated interpolation placeholder {placeholder}")
+                    raise lsp.core.ToolError(
+                        f"embedded LSP lost or duplicated interpolation placeholder {placeholder}"
+                    )
                 placeholder_ranges.append((start, start + len(placeholder)))
 
             content_start_char = len(data[: block.content_start].decode("utf-8"))
             raw_interpolation_ranges = tuple(
                 (
-                    len(data[block.content_start : interpolation.start].decode("utf-8")),
+                    len(
+                        data[block.content_start : interpolation.start].decode("utf-8")
+                    ),
                     len(data[block.content_start : interpolation.end].decode("utf-8")),
                 )
                 for interpolation in block.interpolations
@@ -174,8 +203,12 @@ def install(lsp: Any) -> None:
             )
         return result
 
-    def map_diagnostic(virtual: Any, diagnostic: Mapping[str, Any], backend: str) -> Any:
-        if isinstance(virtual, MappedVirtualDocument) and virtual.range_hits_placeholder(diagnostic["range"]):
+    def map_diagnostic(
+        virtual: Any, diagnostic: Mapping[str, Any], backend: str
+    ) -> Any:
+        if isinstance(
+            virtual, MappedVirtualDocument
+        ) and virtual.range_hits_placeholder(diagnostic["range"]):
             return None
         return original_map_diagnostic(virtual, diagnostic, backend)
 
@@ -185,7 +218,9 @@ def install(lsp: Any) -> None:
             ranges.append(edit["range"])
         else:
             ranges.extend(edit[key] for key in ("insert", "replace") if key in edit)
-        if isinstance(virtual, MappedVirtualDocument) and any(virtual.range_hits_placeholder(range_) for range_ in ranges):
+        if isinstance(virtual, MappedVirtualDocument) and any(
+            virtual.range_hits_placeholder(range_) for range_ in ranges
+        ):
             return None
         return original_map_text_edit(virtual, edit)
 

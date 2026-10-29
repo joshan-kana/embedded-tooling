@@ -2,47 +2,25 @@
   lib,
   pkgs,
   kakehashiPackage ? null,
-  enabledLanguages ? null,
-  registryOverrides ? { },
+  treefmtConfig ? null,
+  languages ? { },
   grammarPackages ? { },
-  formatterPackages ? { },
   lspPackages ? { },
   extraFormatterInputs ? [ ],
   extraLspInputs ? [ ],
 }:
 
 let
-  defaults = builtins.fromJSON (builtins.readFile ./nix-embedded-languages.json);
-  selected = if enabledLanguages == null then builtins.attrNames defaults else enabledLanguages;
-  languageRegistry = lib.filterAttrs (name: _: builtins.elem name selected) (
-    defaults // registryOverrides
+  evaluatedLanguages = lib.evalModules {
+    modules = [
+      ./language-options.nix
+      { config.languages = languages; }
+    ];
+  };
+  languageRegistry = lib.mapAttrs (_: spec: builtins.removeAttrs spec [ "enable" ]) (
+    lib.filterAttrs (_: spec: spec.enable) evaluatedLanguages.config.languages
   );
   registryFile = pkgs.writeText "embedded-language-registry.json" (builtins.toJSON languageRegistry);
-  defaultFormatterPackages = {
-    bash = [
-      pkgs.shfmt
-      pkgs.shellcheck
-    ];
-    python = [ pkgs.ruff ];
-    lua = [ pkgs.stylua ];
-    javascript = [ pkgs.prettier ];
-    typescript = [ pkgs.prettier ];
-    json = [ pkgs.prettier ];
-    jsonc = [ pkgs.prettier ];
-    yaml = [ pkgs.prettier ];
-    toml = [ pkgs.taplo ];
-    rust = [ pkgs.rustfmt ];
-    go = [ pkgs.gofumpt ];
-    fish = [ pkgs.fish ];
-    ruby = [ ];
-    sql = [ ];
-    c = [ pkgs.llvmPackages.clang-tools ];
-    cpp = [ pkgs.llvmPackages.clang-tools ];
-    css = [ pkgs.prettier ];
-    html = [ pkgs.prettier ];
-    markdown = [ pkgs.prettier ];
-    java = [ ];
-  };
   defaultLspPackages = {
     bash = [ pkgs.bash-language-server ];
     python = [
@@ -69,6 +47,7 @@ let
     css = [ pkgs.vscode-langservers-extracted ];
     html = [ pkgs.vscode-langservers-extracted ];
     markdown = [ pkgs.marksman ];
+    java = [ pkgs.jdt-language-server ];
   };
   toolsFor =
     packages:
@@ -77,15 +56,18 @@ let
     pkgs.ast-grep
     pkgs.coreutils
     pkgs.nix
+    pkgs.ruff
+    pkgs.shellcheck
   ]
-  ++ toolsFor (defaultFormatterPackages // formatterPackages)
   ++ extraFormatterInputs;
   lspInputs = formatterInputs ++ toolsFor (defaultLspPackages // lspPackages) ++ extraLspInputs;
 
   package = pkgs.writeShellApplication {
     name = "nix-embedded";
-    runtimeInputs = formatterInputs;
+    runtimeInputs = [ pkgs.treefmt ] ++ formatterInputs;
     text = ''
+      export NIX_EMBEDDED_TREEFMT=${pkgs.treefmt}/bin/treefmt
+      export NIX_EMBEDDED_TREEFMT_CONFIG=${treefmtConfig}
       state_dir="''${NIX_EMBEDDED_STATE_DIR:-''${TMPDIR:-/tmp}/nix-embedded-state-$UID}"
       mkdir -p "$state_dir"
       export NIX_STATE_DIR="$state_dir"
@@ -126,6 +108,12 @@ let
         export NIX_EMBEDDED_AST_GREP=${pkgs.ast-grep}/bin/ast-grep
         export NIX_EMBEDDED_NIXFMT=${pkgs.nixfmt}/bin/nixfmt
         export NIX_EMBEDDED_NIX_INSTANTIATE=${pkgs.nix}/bin/nix-instantiate
+        export NIX_EMBEDDED_TREEFMT=${pkgs.treefmt}/bin/treefmt
+
+        if [ "''${1:-}" = "--check-backends" ]; then
+          exec ${pkgs.python3}/bin/python3 ${./check-backends.py} ${registryFile}
+        fi
+        export NIX_EMBEDDED_TREEFMT_CONFIG=${treefmtConfig}
 
 
         ${pkgs.python3}/bin/python3 "$source_dir/nix-embedded-lsp-entry.py" "$@"
@@ -135,7 +123,7 @@ let
 
   hostLspPackage = mkHostLspPackage {
     name = "nix-embedded-host-lsp";
-    runtimeInputs = lspInputs;
+    runtimeInputs = [ pkgs.treefmt ] ++ lspInputs;
   };
 
   hostLspTestPackage = mkHostLspPackage {
